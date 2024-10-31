@@ -5,10 +5,12 @@
 
 ***
 
-**PsFiT** is an open-source Python framework for distributed sparse model training, designed for scalability and optimized with GPU support. Using the DISADMM algorithm, PsFiT enables efficient \( L_0 \)-norm constrained learning for tasks like linear and logistic regression across multiple nodes.
+**PsFiT** is an open-source Python framework for distributed sparse model training, designed for scalability and 
+optimized with GPU support. Using the DISADMM algorithm, PsFiT enables efficient L0-norm constrained learning
+for tasks like linear and logistic regression across multiple nodes.
 
 ### Features
-- **Distributed Sparse Model Training**: Efficient \( L_0 \)-norm constrained learning across multiple nodes.
+- **Distributed Sparse Model Training**: Efficient L0-norm constrained learning across multiple nodes.
 - **Scalability**: Optimized for single-node and multi-node setups, with GPU acceleration.
 - **Flexible Model Support**: Includes modules for linear regression, logistic regression, and softmax regression.
 - **User-Friendly API**: Intuitive APIs for easy integration and customization.
