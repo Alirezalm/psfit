@@ -49,4 +49,4 @@ from .optim.component import *
 from .optim.distributed import *
 from .optim.optimizer import *
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
