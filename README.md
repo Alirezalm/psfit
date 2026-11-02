@@ -1,157 +1,105 @@
-#### Parallel Sparse Fitting Toolbox (PsFiT)
+# PsFiT — Parallel Sparse Fitting Toolbox
+
+PsFiT is a Python toolbox for fitting **sparse linear models** with an L0 constraint. It provides centralized and Ray-based distributed ADMM training, a small autodiff engine, data utilities, and CPU/GPU backends.
+
 <p align="center">
-  <img src="media/PsFiT.png" alt="PsFiT Logo" width="200">
+  <img src="media/PsFiT.png" alt="PsFiT logo" width="180">
 </p>
 
-***
+## What you can do
 
-**PsFiT** is an open-source Python framework for distributed sparse model training, designed for scalability and 
-optimized with GPU support. Using the DISADMM algorithm, PsFiT enables efficient L0-norm constrained learning
-for tasks like linear and logistic regression across multiple nodes.
+- Train sparse linear regression and softmax classification models with ADMM.
+- Apply projection-based L0 sparsification or other aggregation components.
+- Run local training or coordinate distributed workers through Ray.
+- Use the included datasets, batching, partitioning, preprocessing, losses, and autodiff utilities.
 
-### Features
-- **Distributed Sparse Model Training**: Efficient L0-norm constrained learning across multiple nodes.
-- **Scalability**: Optimized for single-node and multi-node setups, with GPU acceleration.
-- **Flexible Model Support**: Includes modules for linear regression, logistic regression, and softmax regression.
-- **User-Friendly API**: Intuitive APIs for easy integration and customization.
+## Installation
 
-***
+PsFiT requires **Python 3.10 or newer**. Install it from PyPI:
 
-### Architecture
-<p align="center">
-  <img src="media/psfit_arch.png" alt="PsFit Architecture" width="400">
-</p>
-
-<table>
-  <tr>
-    <th>Module</th>
-    <th>Description</th>
-  </tr>
-  <tr>
-    <td><strong>Model</strong></td>
-    <td>Pre-built models for sparse regression tasks, including softmax, logistic, and linear regression.</td>
-  </tr>
-  <tr>
-    <td><strong>Optimizer</strong></td>
-    <td>Optimization tools, including centralized/distributed ADMM, SGD, and dual solvers.</td>
-  </tr>
-  <tr>
-    <td><strong>Data</strong></td>
-    <td>Manages data loading, partitioning, and preprocessing for distributed training.</td>
-  </tr>
-  <tr>
-    <td><strong>Module</strong></td>
-    <td>Components like loss functions specific to different regression tasks.</td>
-  </tr>
-  <tr>
-    <td><strong>Autodiff</strong></td>
-    <td>Automatic differentiation with PsFiT tensors for gradient-based optimization.</td>
-  </tr>
-  <tr>
-    <td><strong>Backend</strong></td>
-    <td>Supports GPU and CPU environments for flexible deployment.</td>
-  </tr>
-</table>
-
-***
-
-### Dependencies
-
-- **numpy**
-- **ray**
-- **torch**
-- **scikit-learn**
-- **pandas**
-
-### Installation
 ```bash
-pip install psfit
+python -m pip install psfit
 ```
 
-### Basic Usage
+This installs the declared dependencies, including NumPy, PyTorch, scikit-learn, and Ray. PsFiT uses its NumPy backend by default. To select the PyTorch backend, set `backend=pytorch` before starting Python; this backend requires an available CUDA device:
 
-#### Distributed Sparse Softmax Regression for Image Classification with MNIST
-
-Necessary imports
-```python
-
-import ray
-
-ray.init(log_to_driver = True)
+```bash
+backend=pytorch python train.py
 ```
 
-Loading data
+## Quick start: sparse linear regression
+
+This example creates a small synthetic regression dataset, fits a linear model, and constrains its coefficients to three nonzero values with the projection sparsifier.
 
 ```python
-import psfit as pf
+import numpy as np
 
-dataset_path = "path/to/mnist-data.npz"
+from psfit import Linear, MSELoss, RandomRegressionDataset
+from psfit.data import DataLoader
+from psfit.optim import LocalTrainer, ProjectionSparsifier, SGD
+from psfit.optim.optimizer import Admm
 
+# Generate y = Xw + noise, with three nonzero coefficients.
+dataset = RandomRegressionDataset(m=256, n=20, variance=0.01)
+w_true = np.zeros((20, 1))
+w_true[:3] = 1.0
+dataset.populate(w_true)
 
-# create mnist dataset
-mnist = pf.MNIST(filename = dataset_path, preprocessor = pf.ImageNormalizer(), cv = True, cv_size = 0.2)
+model = Linear(in_features=20, out_features=1)
+loader = DataLoader(dataset, batch_size=32, shuffle=True, report=False)
+trainer = LocalTrainer(
+    dataloader=loader,
+    loss=MSELoss(),
+    optimizer=SGD(model, learning_rate=0.01),
+    epochs=3,
+    verbose=False,
+)
+optimizer = Admm(
+    trainer=trainer,
+    aggregators=ProjectionSparsifier(density=3),
+)
 
-n_vars, n_classes = mnist.number_of_features, mnist.number_of_classes
+for _ in range(10):
+    loss, residual = optimizer.step(penalty=1.0)
 
-
-# create data partitioner
-num_workers = 4
-
-partitioner = pf.DataPartitioner(dataset = mnist, N = num_workers)
-
-# create data partitions
-partitions = partitioner.partition()
-
-# create a parameter-server with a sparsification strategy
-k  = n_vars // 10
-server = pf.create_parameter_server(aggregators = pf.ProjectionSparsifier(density = k))
-
-# create worker configurations
-for worker_id in range(num_workers):
-    worker_config = pf.WorkerConfig(
-        worker_id = worker_id,
-        batch_size = 64,
-        random_seed = (worker_id + 1) * 101,
-        loader_report = False,
-        model_size = (n_vars, n_classes),
-        sgd_lr = 0.05,
-        local_epochs = 2,
-        local_optim_report = False
-    )
-    
-    server.add_worker_config(config = worker_config)
-    
-
-# create worker nodes
-workers = []
-for worker_id in range(num_workers):
-    dataset = partitions[worker_id]   # local dataset
-
-    loss = pf.SoftmaxLoss() # local loss function
-
-    worker = pf.create_worker(worker_id = worker_id,
-                           local_dataset = dataset,
-                           local_loss = loss,
-                           server = server)
-
-    workers.append(worker)
-
-# create distributed optimizer
-optimizer = pf.DistributedDataParallel(workers = workers, server = server)
-
-# execute training loop
-rounds = 10
-for _ in range(rounds):
-    optimizer.step(penalty = 2.0)
+print(f"loss={loss:.4f}, primal residual={residual:.4f}")
+print("weights:", model.weights.array())
 ```
 
-### Examples
+`density` is the number of coefficients retained in each output column. For classification, PsFiT also provides `SoftmaxLoss`, `SparseSoftmaxClassifier`, and the `MNIST` and `Imdb` dataset helpers.
 
-More examples are provided in [examples](./examples) directory.
+## Distributed training with Ray
 
+The distributed API uses a parameter server, worker configurations, dataset partitions, and `DistributedDataParallel`. See the complete [distributed MNIST softmax-classification notebook](examples/distributed_sparse_softmax_classifier.ipynb) for an end-to-end example.
 
-### Benchmarks
+The `MNIST` helper expects an NPZ archive with `training_data`, `training_labels`, and `test_data` arrays. The distributed notebook initializes Ray, partitions the training dataset across workers, configures each worker, and runs ADMM rounds. Ray must be initialized before creating distributed workers; call `ray.shutdown()` when training is finished.
 
-Benchmarks are provided in [benchmarks](./benchmarks) directory.
+For a centralized classifier that uses validation data, initialize the dataset with `cv=True` (for example, `MNIST(path, preprocessor=ImageNormalizer(), cv=True)`) and pass it to `SparseSoftmaxClassifier`.
 
+## Project layout
 
+| Path | Contents |
+| --- | --- |
+| [`psfit/`](psfit/) | Models, data utilities, autodiff, backend, and optimizers |
+| [`examples/`](examples/) | Jupyter notebooks demonstrating regression and classification workflows |
+| [`benchmarks/`](benchmarks/) | Benchmark scripts for MNIST and IMDb experiments |
+| [`docs/`](docs/) | Sphinx documentation source |
+
+The high-level package architecture is shown below:
+
+<p align="center">
+  <img src="media/psfit_arch.png" alt="PsFiT package architecture" width="520">
+</p>
+
+## Development and tests
+
+To install the runtime dependencies and run the test suite from a source checkout:
+
+```bash
+python -m pip install -r requirements.txt
+python -m unittest discover -s tests
+```
+
+## License
+
+PsFiT is distributed under the [MIT License](LICENSE).
