@@ -61,6 +61,7 @@ for tasks like linear and logistic regression across multiple nodes.
 - **ray**
 - **torch**
 - **scikit-learn**
+- **pandas**
 
 ### Installation
 ```bash
